@@ -1,0 +1,382 @@
+---
+title: "ST_558_HW8"
+author: "Jay Thakur"
+format: html
+editor: visual
+editor_options: 
+  chunk_output_type: console
+---
+# ST 558 HW8
+
+## Reading Data
+
+##### Loading all req libraries
+```{r}
+library(tidymodels)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(readr)
+```
+
+#### Reading through the data
+Using read.csvto read data and as I was having issue with header I decided to drop and reassign names to headers (Same dataset was used for my Project 2)
+
+```{r}
+# Read the CSV file
+df <- read.csv("SeoulBikeData.csv", header = FALSE, stringsAsFactors = FALSE)
+
+# Remove the first row if it's a header
+df <- df[-1, ]
+
+# Assign column names
+colnames(df) <- c("date", "rented_bike_count", "hour", "temperature", "humidity", 
+                  "wind_speed", "visibility", "dew_point_temp", "solar_radiation",
+                  "rainfall", "snowfall", "seasons", "holiday", "functioning_day")
+
+```
+
+## EDA
+
+#### Checking for missing values if any
+
+```{r}
+missing_summary <- df %>%
+  summarise(across(everything(), ~ sum(is.na(.))))
+print(missing_summary)
+```
+
+#### Check column types and summary
+```{r}
+glimpse(df)
+```
+
+#### Summary statistics for numeric and categorical columns
+```{r}
+numeric_summary <- df %>%
+  summarise(across(where(is.numeric), list(min = min, mean = mean, max = max), na.rm = TRUE))
+print(numeric_summary)
+```
+
+```{r}
+categorical_summary <- df %>%
+  summarise(across(where(is.character), ~ list(unique(.))))
+print(categorical_summary)
+```
+
+#### Converting columns to appropriate type
+Converting date to Date type and Season, Holiday and Functioning day to factor. Rest of the columns should be numeric.
+```{r}
+df <- df %>%
+  mutate(
+    date = as.Date(date, format = "%d/%m/%Y"),
+    seasons = factor(seasons),
+    holiday = factor(holiday),
+    functioning_day = factor(functioning_day)
+  )
+
+
+# Convert relevant columns to numeric
+df <- df %>%
+  mutate(across(c(rented_bike_count, hour, temperature, humidity, wind_speed,
+                  visibility, dew_point_temp, solar_radiation, 
+                  rainfall, snowfall), as.numeric))
+
+```
+
+#### Summary statistics for numeric and categorical columns
+Summarizing after type conversion.
+
+```{r}
+numeric_summary <- df %>%
+  summarise(across(where(is.numeric), list(min = min, mean = mean, max = max), na.rm = TRUE))
+print(numeric_summary)
+```
+
+```{r}
+categorical_summary <- df %>%
+  summarise(across(where(is.factor), ~ list(levels(.))))
+print(categorical_summary)
+```
+
+#### Generating statistic for Bike count
+```{r}
+# Filter data for functioning days and summarize statistics
+functioning_data <- df
+
+# Summary of bike count across categories
+functioning_summary <- functioning_data %>%
+  group_by(seasons, holiday, functioning_day) %>%
+  summarise(
+    mean_bike_count = mean(rented_bike_count),
+    total_bike_count = sum(rented_bike_count),
+    .groups = "drop"
+  )
+print(functioning_summary)
+
+```
+
+From above we can see that Bike renting was Zero when Functioning day is "No". Hence we can drop those rows which are useless.
+
+```{r}
+# Filter data for functioning days and summarize statistics
+# Filter data for functioning days
+functioning_data <- df %>%
+  filter(functioning_day == 'Yes')
+
+# Summary of bike count across categories
+functioning_summary <- functioning_data %>%
+  group_by(seasons, holiday, functioning_day) %>%
+  summarise(
+    mean_bike_count = mean(rented_bike_count),
+    total_bike_count = sum(rented_bike_count),
+    .groups = "drop"
+  )
+print(functioning_summary)
+```
+
+#### Summarizing Data Across Hours to daily observations
+Summarizing by grouping with seasons and Holiday across hours.
+
+```{r}
+df_daily <- functioning_data %>%
+  group_by(date, seasons, holiday) %>%
+  summarise(
+    total_bike_count = sum(rented_bike_count),
+    total_rainfall = sum(rainfall),
+    total_snowfall = sum(snowfall),
+    mean_temperature = mean(temperature),
+    mean_humidity = mean(humidity),
+    mean_wind_speed = mean(wind_speed),
+    mean_visibility = mean(visibility),
+    mean_dew_point_temp = mean(dew_point_temp),
+    mean_solar_radiation = mean(solar_radiation),
+    .groups = "drop"
+  )
+```
+
+```{r}
+summary(df_daily)
+```
+
+```{r}
+# Verify that 'date' is of class Date
+class(df_daily$date)
+```
+
+#### Plotting Renting bike count across temperature
+
+```{r}
+ggplot(df_daily, aes(x = mean_temperature, y = total_bike_count)) +
+  geom_point() +
+  labs(x = "Mean Temperature (°C)", y = "Total Bike Count", title = "Bike Rentals vs. Temperature")
+
+```
+
+#### Displaying correlation matric across variables
+
+```{r}
+numeric_vars <- df_daily %>%
+  select(total_bike_count, total_rainfall, total_snowfall, mean_temperature, mean_humidity, mean_wind_speed, mean_visibility, mean_dew_point_temp, mean_solar_radiation)
+
+cor_matrix <- cor(numeric_vars, use = "complete.obs")
+print(cor_matrix)
+
+```
+
+## Split the Data
+
+#### Splitting into Training and Test Sets
+Using 75/25 split to split data into Training and Testing.
+```{r}
+set.seed(123)
+data_split <- initial_split(df, prop = 0.75, strata = seasons)
+train_data <- training(data_split)
+test_data <- testing(data_split)
+```
+
+#### Creating 10 cross-validation folds for training data which will be used for fitting and validation.
+
+```{r}
+cv_folds <- vfold_cv(train_data, v = 10)
+```
+
+## Fitting MLR Models
+
+#### Creating Recipe 1
+Creating day of week variable to get weekday and weekend, converting cat varibles to dummy and normalizing numric variables.
+
+```{r}
+
+recipe1 <- recipe(rented_bike_count ~ ., data = train_data) %>%
+  # Extract date features
+  step_date(date, features = c("dow"), label = FALSE) %>%
+  step_mutate(
+    day_type = factor(
+      if_else(date_dow %in% c(1, 7), "weekend", "weekday"),
+      levels = c("weekday", "weekend")
+    )
+  ) %>%
+  # Remove original date variables
+  step_rm(date, date_dow) %>%
+  # Convert categorical variables to dummy variables
+  step_dummy(all_nominal_predictors()) %>%
+  # Normalize numeric predictors
+  step_normalize(all_numeric_predictors()) %>%
+  # Remove linear combinations
+  step_lincomb(all_predictors())
+
+# Prepare the recipe
+prepped_recipe <- prep(recipe1, training = train_data)
+
+# Bake the recipe to check the data
+baked_data <- bake(prepped_recipe, new_data = NULL)
+
+# View the baked data
+glimpse(baked_data)
+
+```
+
+#### Creating Recipe 2
+Adding interatction between mentioned variables.
+
+```{r}
+recipe2 <- recipe(rented_bike_count ~ ., data = train_data) %>%
+  # Extract date features
+  step_date(date, features = c("dow"), label = FALSE) %>%
+  step_mutate(
+    day_type = factor(
+      if_else(date_dow %in% c(1, 7), "weekend", "weekday"),
+      levels = c("weekday", "weekend")
+    )
+  ) %>%
+  # Remove original date variables
+  step_rm(date, date_dow) %>%
+  # Create interactions before dummy variables
+  step_interact(terms = ~ starts_with("seasons"):starts_with("holiday")) %>%
+  step_interact(terms = ~ temperature:starts_with("seasons")) %>%
+  step_interact(terms = ~ temperature:rainfall) %>%
+  # Convert categorical variables to dummy variables
+  step_dummy(all_nominal_predictors()) %>%
+  # Normalize numeric predictors
+  step_normalize(all_numeric_predictors()) %>%
+  # Remove linear combinations
+  step_lincomb(all_predictors())
+
+
+# Prepare the recipe
+prepped_recipe <- prep(recipe2, training = train_data)
+
+# Bake the recipe to check the data
+baked_data <- bake(prepped_recipe, new_data = NULL)
+
+# View the baked data
+glimpse(baked_data)
+```
+
+#### Creating Recipe 3
+Adding 2nd degree poly term for each numric variable.
+
+```{r}
+# Identify continuous numeric variables
+numeric_vars <- c(
+  "hour",
+  "temperature",
+  "humidity",
+  "wind_speed",
+  "visibility",
+  "dew_point_temp",
+  "solar_radiation",
+  "rainfall",
+  "snowfall"
+)
+
+recipe3 <- recipe2 %>%
+  step_poly(all_of(numeric_vars), degree = 2)
+
+# Prepare the recipe
+prepped_recipe <- prep(recipe3, training = train_data)
+
+# Bake the recipe to check the data
+baked_data <- bake(prepped_recipe, new_data = NULL)
+
+# View the baked data
+glimpse(baked_data)
+```
+
+#### Setting up Linear regression model
+
+```{r}
+lm_model <- linear_reg() %>%
+  set_engine("lm")
+```
+
+
+```{r}
+workflow1 <- workflow() %>%
+  add_model(lm_model) %>%
+  add_recipe(recipe1)
+
+workflow2 <- workflow() %>%
+  add_model(lm_model) %>%
+  add_recipe(recipe2)
+
+workflow3 <- workflow() %>%
+  add_model(lm_model) %>%
+  add_recipe(recipe3)
+```
+
+#### Fitting training data on each model of receipe
+
+```{r}
+set.seed(123)
+results1 <- fit_resamples(
+  workflow1,
+  resamples = cv_folds,
+  metrics = metric_set(rmse)
+)
+
+results2 <- fit_resamples(
+  workflow2,
+  resamples = cv_folds,
+  metrics = metric_set(rmse)
+)
+
+results3 <- fit_resamples(
+  workflow3,
+  resamples = cv_folds,
+  metrics = metric_set(rmse)
+)
+```
+
+#### Analyzing performance metric of each model
+
+```{r}
+collect_metrics(results1)
+collect_metrics(results2)
+collect_metrics(results3)
+```
+
+#### Choice of Final Model
+
+As per above metric we can see that Third model has less RMSE value and standard error value compared to other two, Hence I will be using third model for fitting whole training set and testing.
+
+```{r}
+final_fit <- last_fit(workflow3, split = data_split)
+```
+
+```{r}
+final_fit %>%
+  collect_metrics()
+```
+
+As we can see RMSE value we get here is less than CV RMSE of all 3 models. Though R-square value indicates mid-level generalization of data.
+
+```{r}
+final_model <- extract_fit_parsnip(final_fit$.workflow[[1]])
+
+tidy(final_model)
+```
+
+
+
