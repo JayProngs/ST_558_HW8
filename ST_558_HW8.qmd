@@ -26,10 +26,8 @@ Using read.csvto read data and as I was having issue with header I decided to dr
 # Read the CSV file
 df <- read.csv("SeoulBikeData.csv", header = FALSE, stringsAsFactors = FALSE)
 
-# Remove the first row if it's a header
+# Remove the first row
 df <- df[-1, ]
-
-# Assign column names
 colnames(df) <- c("date", "rented_bike_count", "hour", "temperature", "humidity", 
                   "wind_speed", "visibility", "dew_point_temp", "solar_radiation",
                   "rainfall", "snowfall", "seasons", "holiday", "functioning_day")
@@ -41,7 +39,7 @@ colnames(df) <- c("date", "rented_bike_count", "hour", "temperature", "humidity"
 #### Checking for missing values if any
 
 ```{r}
-missing_summary <- df %>%
+missing_summary <- df |>
   summarise(across(everything(), ~ sum(is.na(.))))
 print(missing_summary)
 ```
@@ -53,13 +51,13 @@ glimpse(df)
 
 #### Summary statistics for numeric and categorical columns
 ```{r}
-numeric_summary <- df %>%
+numeric_summary <- df |>
   summarise(across(where(is.numeric), list(min = min, mean = mean, max = max), na.rm = TRUE))
 print(numeric_summary)
 ```
 
 ```{r}
-categorical_summary <- df %>%
+categorical_summary <- df |>
   summarise(across(where(is.character), ~ list(unique(.))))
 print(categorical_summary)
 ```
@@ -67,7 +65,7 @@ print(categorical_summary)
 #### Converting columns to appropriate type
 Converting date to Date type and Season, Holiday and Functioning day to factor. Rest of the columns should be numeric.
 ```{r}
-df <- df %>%
+df <- df |>
   mutate(
     date = as.Date(date, format = "%d/%m/%Y"),
     seasons = factor(seasons),
@@ -75,9 +73,7 @@ df <- df %>%
     functioning_day = factor(functioning_day)
   )
 
-
-# Convert relevant columns to numeric
-df <- df %>%
+df <- df |>
   mutate(across(c(rented_bike_count, hour, temperature, humidity, wind_speed,
                   visibility, dew_point_temp, solar_radiation, 
                   rainfall, snowfall), as.numeric))
@@ -88,25 +84,23 @@ df <- df %>%
 Summarizing after type conversion.
 
 ```{r}
-numeric_summary <- df %>%
+numeric_summary <- df |>
   summarise(across(where(is.numeric), list(min = min, mean = mean, max = max), na.rm = TRUE))
 print(numeric_summary)
 ```
 
 ```{r}
-categorical_summary <- df %>%
+categorical_summary <- df |>
   summarise(across(where(is.factor), ~ list(levels(.))))
 print(categorical_summary)
 ```
 
 #### Generating statistic for Bike count
 ```{r}
-# Filter data for functioning days and summarize statistics
 functioning_data <- df
 
-# Summary of bike count across categories
-functioning_summary <- functioning_data %>%
-  group_by(seasons, holiday, functioning_day) %>%
+functioning_summary <- functioning_data |>
+  group_by(seasons, holiday, functioning_day) |>
   summarise(
     mean_bike_count = mean(rented_bike_count),
     total_bike_count = sum(rented_bike_count),
@@ -119,14 +113,11 @@ print(functioning_summary)
 From above we can see that Bike renting was Zero when Functioning day is "No". Hence we can drop those rows which are useless.
 
 ```{r}
-# Filter data for functioning days and summarize statistics
-# Filter data for functioning days
-functioning_data <- df %>%
+functioning_data <- df |>
   filter(functioning_day == 'Yes')
 
-# Summary of bike count across categories
-functioning_summary <- functioning_data %>%
-  group_by(seasons, holiday, functioning_day) %>%
+functioning_summary <- functioning_data |>
+  group_by(seasons, holiday, functioning_day) |>
   summarise(
     mean_bike_count = mean(rented_bike_count),
     total_bike_count = sum(rented_bike_count),
@@ -139,8 +130,8 @@ print(functioning_summary)
 Summarizing by grouping with seasons and Holiday across hours.
 
 ```{r}
-df_daily <- functioning_data %>%
-  group_by(date, seasons, holiday) %>%
+df_daily <- functioning_data |>
+  group_by(date, seasons, holiday) |>
   summarise(
     total_bike_count = sum(rented_bike_count),
     total_rainfall = sum(rainfall),
@@ -160,7 +151,7 @@ summary(df_daily)
 ```
 
 ```{r}
-# Verify that 'date' is of class Date
+# Verifying that 'date' is of class Date
 class(df_daily$date)
 ```
 
@@ -176,7 +167,7 @@ ggplot(df_daily, aes(x = mean_temperature, y = total_bike_count)) +
 #### Displaying correlation matric across variables
 
 ```{r}
-numeric_vars <- df_daily %>%
+numeric_vars <- df_daily |>
   select(total_bike_count, total_rainfall, total_snowfall, mean_temperature, mean_humidity, mean_wind_speed, mean_visibility, mean_dew_point_temp, mean_solar_radiation)
 
 cor_matrix <- cor(numeric_vars, use = "complete.obs")
@@ -208,31 +199,21 @@ Creating day of week variable to get weekday and weekend, converting cat varible
 
 ```{r}
 
-recipe1 <- recipe(rented_bike_count ~ ., data = train_data) %>%
-  # Extract date features
-  step_date(date, features = c("dow"), label = FALSE) %>%
+recipe1 <- recipe(rented_bike_count ~ ., data = train_data) |>
+  step_date(date, features = c("dow"), label = FALSE) |>
   step_mutate(
     day_type = factor(
       if_else(date_dow %in% c(1, 7), "weekend", "weekday"),
       levels = c("weekday", "weekend")
     )
-  ) %>%
-  # Remove original date variables
-  step_rm(date, date_dow) %>%
-  # Convert categorical variables to dummy variables
-  step_dummy(all_nominal_predictors()) %>%
-  # Normalize numeric predictors
-  step_normalize(all_numeric_predictors()) %>%
-  # Remove linear combinations
+  ) |>
+  step_rm(date, date_dow) |>
+  step_dummy(all_nominal_predictors()) |>
+  step_normalize(all_numeric_predictors()) |>
   step_lincomb(all_predictors())
 
-# Prepare the recipe
 prepped_recipe <- prep(recipe1, training = train_data)
-
-# Bake the recipe to check the data
 baked_data <- bake(prepped_recipe, new_data = NULL)
-
-# View the baked data
 glimpse(baked_data)
 
 ```
@@ -241,36 +222,24 @@ glimpse(baked_data)
 Adding interatction between mentioned variables.
 
 ```{r}
-recipe2 <- recipe(rented_bike_count ~ ., data = train_data) %>%
-  # Extract date features
-  step_date(date, features = c("dow"), label = FALSE) %>%
+recipe2 <- recipe(rented_bike_count ~ ., data = train_data) |>
+  step_date(date, features = c("dow"), label = FALSE) |>
   step_mutate(
     day_type = factor(
       if_else(date_dow %in% c(1, 7), "weekend", "weekday"),
       levels = c("weekday", "weekend")
     )
-  ) %>%
-  # Remove original date variables
-  step_rm(date, date_dow) %>%
-  # Create interactions before dummy variables
-  step_interact(terms = ~ starts_with("seasons"):starts_with("holiday")) %>%
-  step_interact(terms = ~ temperature:starts_with("seasons")) %>%
-  step_interact(terms = ~ temperature:rainfall) %>%
-  # Convert categorical variables to dummy variables
-  step_dummy(all_nominal_predictors()) %>%
-  # Normalize numeric predictors
-  step_normalize(all_numeric_predictors()) %>%
-  # Remove linear combinations
+  ) |>
+  step_rm(date, date_dow) |>
+  step_interact(terms = ~ starts_with("seasons"):starts_with("holiday")) |>
+  step_interact(terms = ~ temperature:starts_with("seasons")) |>
+  step_interact(terms = ~ temperature:rainfall) |>
+  step_dummy(all_nominal_predictors()) |>
+  step_normalize(all_numeric_predictors()) |>
   step_lincomb(all_predictors())
 
-
-# Prepare the recipe
 prepped_recipe <- prep(recipe2, training = train_data)
-
-# Bake the recipe to check the data
 baked_data <- bake(prepped_recipe, new_data = NULL)
-
-# View the baked data
 glimpse(baked_data)
 ```
 
@@ -278,7 +247,6 @@ glimpse(baked_data)
 Adding 2nd degree poly term for each numric variable.
 
 ```{r}
-# Identify continuous numeric variables
 numeric_vars <- c(
   "hour",
   "temperature",
@@ -291,38 +259,33 @@ numeric_vars <- c(
   "snowfall"
 )
 
-recipe3 <- recipe2 %>%
+recipe3 <- recipe2 |>
   step_poly(all_of(numeric_vars), degree = 2)
 
-# Prepare the recipe
 prepped_recipe <- prep(recipe3, training = train_data)
-
-# Bake the recipe to check the data
 baked_data <- bake(prepped_recipe, new_data = NULL)
-
-# View the baked data
 glimpse(baked_data)
 ```
 
 #### Setting up Linear regression model
 
 ```{r}
-lm_model <- linear_reg() %>%
+lm_model <- linear_reg() |>
   set_engine("lm")
 ```
 
 
 ```{r}
-workflow1 <- workflow() %>%
-  add_model(lm_model) %>%
+workflow1 <- workflow() |>
+  add_model(lm_model) |>
   add_recipe(recipe1)
 
-workflow2 <- workflow() %>%
-  add_model(lm_model) %>%
+workflow2 <- workflow() |>
+  add_model(lm_model) |>
   add_recipe(recipe2)
 
-workflow3 <- workflow() %>%
-  add_model(lm_model) %>%
+workflow3 <- workflow() |>
+  add_model(lm_model) |>
   add_recipe(recipe3)
 ```
 
@@ -366,7 +329,7 @@ final_fit <- last_fit(workflow3, split = data_split)
 ```
 
 ```{r}
-final_fit %>%
+final_fit |>
   collect_metrics()
 ```
 
